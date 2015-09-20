@@ -48,6 +48,57 @@ class ApplicationTest extends \PHPUnit_Framework_TestCase
         $app->make('request');
     }
 
+    public function testClassMiddleware()
+    {
+        $app = new Application();
+        $app->get('/', function (Request $request) {
+            return $request->get('p');
+        })->middleware(TestMiddleware::class);
+
+        $request = Request::create('/', 'GET');
+        $this->assertSame('foobar', $app->handle($request)->getContent());
+    }
+
+    public function testClosureMiddleware()
+    {
+        $app = new Application();
+        $app->get('/', function (Request $request) {
+            return $request->get('p');
+        })->middleware(function (Request $request, $next) {
+            $request->query->set('p', 'foo');
+            return Response::create($next($request)->getContent() . 'bar');
+        });
+
+        $request = Request::create('/', 'GET');
+        $this->assertSame('foobar', $app->handle($request)->getContent());
+    }
+
+    public function testGroup()
+    {
+        $app = new Application();
+        $app->group(function ($r) {
+            $r->get('/path1', function () { return 'path1'; });
+            $r->get('/path2', function () { return 'path2'; });
+        })->prefix('/prefix');
+
+        $request = Request::create('/prefix/path1', 'GET');
+        $this->assertSame('path1', $app->handle($request)->getContent());
+
+        $request = Request::create('/prefix/path2', 'GET');
+        $this->assertSame('path2', $app->handle($request)->getContent());
+    }
+
+    public function testRoute()
+    {
+        $app = new Application();
+        $app->route('GET', '/', function () {
+            return 'OK';
+        });
+
+        $request = Request::create('/', 'GET');
+        $this->assertSame('OK', $app->handle($request)->getContent());
+    }
+
     public function testGetRequest()
     {
         $request = Request::create('/', 'GET');
@@ -239,5 +290,15 @@ class ApplicationTest extends \PHPUnit_Framework_TestCase
         $this->expectOutputString('OK');
 
         $app->run();
+    }
+}
+
+class TestMiddleware
+{
+    public function handle(Request $request, callable $next)
+    {
+        $request->query->set('p', 'foo');
+        $response = $next($request);
+        return Response::create($response->getContent() . 'bar');
     }
 }

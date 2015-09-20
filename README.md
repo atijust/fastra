@@ -12,8 +12,10 @@ A micro-framework for PHP5.5+.
 require_once __DIR__ . '/vendor/autoload.php';
 
 $app = new Fastra\Application();
-$app->get('/{name}', function ($name) {
-    return 'Hello, ' . $name;
-});
+$app->group(function ($router) {
+    $router->get('/{name}', function ($name) {
+        return 'Hello, ' . $name;
+    });
+})->prefix('/hello')->middleware(AuthMiddleware::class);
 $app->run();
 ```

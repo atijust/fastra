@@ -16,11 +16,11 @@ class Application extends Container implements HttpKernelInterface
     /** @var \Fastra\ServiceProviderInterface[] */
     private $providers = [];
 
-    /** @var array */
-    private $routes = [];
+    /** @var \Fastra\RouteCollection */
+    private $routeCollection;
 
     /** @var callable|string */
-    private $exceptionHandler = null;
+    private $exceptionHandler;
 
     /**
      * @param array $values
@@ -44,6 +44,8 @@ class Application extends Container implements HttpKernelInterface
         foreach ($values as $key => $value) {
             $this[$key] = $value;
         }
+
+        $this->routeCollection = new RouteCollection();
     }
 
     /**
@@ -74,74 +76,83 @@ class Application extends Container implements HttpKernelInterface
     }
 
     /**
+     * @param callable $callback
+     * @return \Fastra\RouteCollection
+     */
+    public function group(callable $callback)
+    {
+        return $this->routeCollection->group($callback);
+    }
+
+    /**
      * @param string|string[] $method
-     * @param string $route
+     * @param string $path
      * @param string|callable $handler
-     * @return void
+     * @return \Fastra\Route
      */
-    public function route($method, $route, $handler)
+    public function route($method, $path, $handler)
     {
-        $this->routes[] = [$method, $route, $handler];
+        return $this->routeCollection->route($method, $path, $handler);
     }
 
     /**
-     * @param string $route
+     * @param string $path
      * @param string|callable $handler
-     * @return void
+     * @return \Fastra\Route
      */
-    public function get($route, $handler)
+    public function get($path, $handler)
     {
-        $this->route('GET', $route, $handler);
+        return $this->routeCollection->get($path, $handler);
     }
 
     /**
-     * @param string $route
+     * @param string $path
      * @param string|callable $handler
-     * @return void
+     * @return \Fastra\Route
      */
-    public function post($route, $handler)
+    public function post($path, $handler)
     {
-        $this->route('POST', $route, $handler);
+        return $this->routeCollection->post($path, $handler);
     }
 
     /**
-     * @param string $route
+     * @param string $path
      * @param string|callable $handler
-     * @return void
+     * @return \Fastra\Route
      */
-    public function put($route, $handler)
+    public function put($path, $handler)
     {
-        $this->route('PUT', $route, $handler);
+        return $this->routeCollection->put($path, $handler);
     }
 
     /**
-     * @param string $route
+     * @param string $path
      * @param string|callable $handler
-     * @return void
+     * @return \Fastra\Route
      */
-    public function delete($route, $handler)
+    public function delete($path, $handler)
     {
-        $this->route('DELETE', $route, $handler);
+        return $this->routeCollection->delete($path, $handler);
     }
 
     /**
-     * @param string $route
+     * @param string $path
      * @param string|callable $handler
-     * @return void
+     * @return \Fastra\Route
      */
-    public function options($route, $handler)
+    public function options($path, $handler)
     {
-        $this->route('OPTIONS', $route, $handler);
+        return $this->routeCollection->options($path, $handler);
     }
 
     /**
-     * @param string $route
+     * @param string $path
      * @param string|callable $handler
-     * @return void
+     * @return \Fastra\Route
      */
-    public function patch($route, $handler)
+    public function patch($path, $handler)
     {
-        $this->route('PATCH', $route, $handler);
+        return $this->routeCollection->patch($path, $handler);
     }
 
     /**
@@ -194,12 +205,7 @@ class Application extends Container implements HttpKernelInterface
 
         switch ($routeInfo[0]) {
             case Dispatcher::FOUND:
-                $response = $this->call($routeInfo[1], $routeInfo[2]);
-                if ($response instanceof Response) {
-                    return $response;
-                } else {
-                    return Response::create((string)$response);
-                }
+                return $this->callRoute($routeInfo[1], $request, $routeInfo[2]);
             case Dispatcher::NOT_FOUND:
                 throw new NotFoundHttpException();
             case Dispatcher::METHOD_NOT_ALLOWED:
@@ -225,9 +231,9 @@ class Application extends Container implements HttpKernelInterface
      */
     private function createDispatcher()
     {
-        $routeDefinition = function (RouteCollector $router) {
-            foreach ($this->routes as list($method, $route, $handler)) {
-                $router->addRoute($method, $route, $handler);
+        $routeDefinition = function (RouteCollector $collector) {
+            foreach ($this->routeCollection->getRoutes() as $route) {
+                $collector->addRoute($route->methods, $route->path, $route);
             }
         };
 
@@ -239,5 +245,38 @@ class Application extends Container implements HttpKernelInterface
         } else {
             return \FastRoute\simpleDispatcher($routeDefinition);
         }
+    }
+
+    /**
+     * @param \Fastra\Route $route
+     * @param \Symfony\Component\HttpFoundation\Request $request
+     * @param array $params
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    private function callRoute(Route $route, Request $request, array $params)
+    {
+        $action = function (Request $request) use ($route, $params) {
+            $this->instance('request', $request);
+            $response = $this->call($route->handler, $params);
+            if ($response instanceof Response) {
+                return $response;
+            } else {
+                return Response::create((string)$response);
+            }
+        };
+
+        $reducer = function ($next, $middleware) {
+            return function (Request $request) use ($next, $middleware) {
+                if (is_callable($middleware)) {
+                    return call_user_func($middleware, $request, $next);
+                } else {
+                    return $this->make($middleware)->handle($request, $next);
+                }
+            };
+        };
+
+        $callable = array_reduce(array_reverse($route->middleware), $reducer, $action);
+
+        return call_user_func($callable, $request);
     }
 }
